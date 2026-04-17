@@ -1,6 +1,6 @@
 # Indian Stock Market Data Analysis Dashboard
 
-A full deployable **Streamlit data analysis dashboard** built for a project like:
+**Streamlit data analysis dashboard** 
 
 This version uses **live Indian stock-market data** from Yahoo Finance for popular NSE-listed companies, so the dashboard stays useful even after deployment.
 
@@ -38,32 +38,12 @@ This version uses **live Indian stock-market data** from Yahoo Finance for popul
 ## Project structure
 
 ```text
-indian_stock_dashboard/
+
 ├── app.py
-├── requirements.txt
-├── runtime.txt
 ├── README.md
 └── .streamlit/
     └── config.toml
 ```
-
-## Run locally
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Deploy on Streamlit Community Cloud
-
-1. Upload this folder to GitHub.
-2. Go to Streamlit Community Cloud.
-3. Create a new app.
-4. Select your GitHub repo.
-5. Set the main file path to `app.py`.
-6. Deploy.
-
-## Suggested 3-minute walkthrough for your submission
 
 ### 1. Problem statement
 I built a data analysis dashboard for Indian stock-market data. The goal is to study price movement, risk, and performance of major Indian companies using live public data.
