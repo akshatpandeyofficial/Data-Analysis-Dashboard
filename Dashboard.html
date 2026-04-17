@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DataPulse – Analytics Dashboard</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Sora:wght@300;400;600;700&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --bg:      #0D0F1A;
+  --card:    #111422;
+  --card2:   #161928;
+  --border:  #1E2436;
+  --a1:      #00F5C4;
+  --a2:      #7C6EFA;
+  --a3:      #FF6B8A;
+  --a4:      #FFB830;
+  --a5:      #4CC9F0;
+  --text:    #E2E8F0;
+  --muted:   #64748B;
+  --mono:    'Space Mono', monospace;
+  --sans:    'Sora', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  min-height: 100vh;
+  overflow-x: hidden;
+}
+
+/* ── Noise texture overlay ── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='300' height='300' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none; z-index: 0; opacity: 0.5;
+}
+
+/* ── Layout ── */
+.layout { display: flex; min-height: 100vh; position: relative; z-index: 1; }
+
+/* ── Sidebar ── */
+.sidebar {
+  width: 240px; flex-shrink: 0;
+  background: var(--card);
+  border-right: 1px solid var(--border);
+  padding: 28px 20px;
+  display: flex; flex-direction: column; gap: 6px;
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+}
+.logo {
+  font-family: var(--mono);
+  font-size: 18px; font-weight: 700;
+  color: var(--a1);
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+  display: flex; align-items: center; gap: 8px;
+}
+.logo-dot { width: 8px; height: 8px; background: var(--a1); border-radius: 50%; animation: pulse 2s infinite; }
+@keyframes pulse { 0%,100% { opacity: 1; box-shadow: 0 0 0 0 #00F5C466; } 50% { opacity: .8; box-shadow: 0 0 0 6px #00F5C400; } }
+
+.sidebar-sub { color: var(--muted); font-size: 10px; letter-spacing: 2px; text-transform: uppercase; margin-bottom: 20px; }
+
+.nav-section { color: var(--muted); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; margin: 18px 0 8px 4px; }
+.nav-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 12px; border-radius: 8px;
+  font-size: 13px; color: var(--muted);
+  cursor: pointer; transition: all .2s;
+  border: 1px solid transparent;
+}
+.nav-item:hover, .nav-item.active {
+  background: #00F5C40D; color: var(--a1);
+  border-color: #00F5C422;
+}
+.nav-item .icon { width: 16px; text-align: center; }
+
+.sidebar-divider { height: 1px; background: var(--border); margin: 16px 0; }
+
+.filter-label { font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin: 12px 0 6px; }
+.filter-group { display: flex; flex-wrap: wrap; gap: 5px; }
+.filter-chip {
+  padding: 4px 10px; border-radius: 20px; font-size: 11px; cursor: pointer;
+  background: var(--card2); border: 1px solid var(--border); color: var(--muted);
+  transition: all .2s;
+}
+.filter-chip.active { background: #00F5C415; border-color: var(--a1); color: var(--a1); }
+
+/* ── Main ── */
+.main { flex: 1; padding: 28px 32px; overflow-x: hidden; }
+
+/* ── Header ── */
+.header {
+  background: linear-gradient(120deg, #00F5C41A 0%, #7C6EFA0D 50%, transparent 100%);
+  border: 1px solid #00F5C422;
+  border-radius: 16px; padding: 22px 28px;
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 28px;
+  animation: fadeDown .6s ease both;
+}
+.header-title { font-family: var(--mono); font-size: 14px; letter-spacing: 3px; color: var(--a1); text-transform: uppercase; }
+.header-sub { color: var(--muted); font-size: 12px; margin-top: 3px; }
+.header-right { display: flex; gap: 12px; align-items: center; }
+.live-badge {
+  display: flex; align-items: center; gap: 6px;
+  background: #00F5C415; border: 1px solid #00F5C433;
+  padding: 6px 12px; border-radius: 20px;
+  font-size: 11px; color: var(--a1); font-family: var(--mono);
+}
+.live-dot { width: 6px; height: 6px; background: var(--a1); border-radius: 50%; animation: pulse 1.5s infinite; }
+
+/* ── KPI Cards ── */
+.kpi-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+.kpi-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-left: 3px solid;
+  border-radius: 12px; padding: 20px;
+  animation: fadeUp .5s ease both;
+  position: relative; overflow: hidden;
+  transition: transform .2s, box-shadow .2s;
+}
+.kpi-card:hover { transform: translateY(-3px); box-shadow: 0 12px 40px #0008; }
+.kpi-card::before {
+  content: '';
+  position: absolute; top: -30px; right: -30px;
+  width: 80px; height: 80px; border-radius: 50%;
+  opacity: 0.06;
+}
+.kpi-card.c1 { border-left-color: var(--a1); } .kpi-card.c1::before { background: var(--a1); }
+.kpi-card.c2 { border-left-color: var(--a2); } .kpi-card.c2::before { background: var(--a2); }
+.kpi-card.c3 { border-left-color: var(--a3); } .kpi-card.c3::before { background: var(--a3); }
+.kpi-card.c4 { border-left-color: var(--a4); } .kpi-card.c4::before { background: var(--a4); }
+
+.kpi-label { font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.kpi-value { font-family: var(--mono); font-size: 24px; font-weight: 700; color: var(--text); }
+.kpi-delta { font-size: 11px; margin-top: 6px; display: flex; align-items: center; gap: 4px; }
+.kpi-delta.up   { color: var(--a1); }
+.kpi-delta.down { color: var(--a3); }
+.kpi-icon { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 28px; opacity: .15; }
+
+/* ── Section header ── */
+.section-hd {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 2.5px;
+  text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 10px; margin: 28px 0 18px;
+  display: flex; align-items: center; gap: 10px;
+}
+.section-hd::after { content: ''; flex: 1; height: 1px; background: var(--border); }
+
+/* ── Charts grid ── */
+.grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-bottom: 20px; }
+.grid-1 { margin-bottom: 20px; }
+
+.chart-card {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 14px; padding: 20px;
+  animation: fadeUp .6s ease both;
+  transition: border-color .3s;
+}
+.chart-card:hover { border-color: #00F5C422; }
+.chart-title { font-family: var(--mono); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; color: var(--muted); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+.chart-title span { color: var(--text); font-size: 13px; }
+canvas { max-height: 280px; }
+
+/* ── Stats table ── */
+.stats-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.stats-table th { padding: 10px 14px; text-align: left; font-family: var(--mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--border); }
+.stats-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); color: var(--text); font-family: var(--mono); font-size: 11px; }
+.stats-table tr:hover td { background: #00F5C406; }
+.bar-cell { display: flex; align-items: center; gap: 8px; }
+.mini-bar { height: 6px; border-radius: 3px; transition: width .5s ease; }
+
+/* ── Upload zone ── */
+.upload-zone {
+  border: 2px dashed var(--border); border-radius: 12px;
+  padding: 20px; text-align: center; cursor: pointer;
+  transition: all .2s; color: var(--muted); font-size: 12px;
+  margin-bottom: 20px;
+}
+.upload-zone:hover { border-color: var(--a1); color: var(--a1); }
+
+/* ── Animations ── */
+@keyframes fadeUp   { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes fadeDown { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
+
+.kpi-card:nth-child(1) { animation-delay: .05s; }
+.kpi-card:nth-child(2) { animation-delay: .10s; }
+.kpi-card:nth-child(3) { animation-delay: .15s; }
+.kpi-card:nth-child(4) { animation-delay: .20s; }
+
+/* ── Scrollbar ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Responsive ── */
+@media (max-width: 1100px) { .kpi-grid { grid-template-columns: 1fr 1fr; } .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+@media (max-width: 768px)  { .sidebar { display: none; } .main { padding: 16px; } }
+</style>
+</head>
+<body>
+<div class="layout">
+
+<!-- ── Sidebar ── -->
+<aside class="sidebar">
+  <div class="logo"><div class="logo-dot"></div> DataPulse</div>
+  <div class="sidebar-sub">Analytics Platform</div>
+
+  <div class="nav-section">Navigation</div>
+  <div class="nav-item active"><span class="icon">📊</span> Overview</div>
+  <div class="nav-item"><span class="icon">📈</span> Trends</div>
+  <div class="nav-item"><span class="icon">🛒</span> Categories</div>
+  <div class="nav-item"><span class="icon">🗺️</span> Regions</div>
+  <div class="nav-item"><span class="icon">🔬</span> EDA</div>
+
+  <div class="sidebar-divider"></div>
+  <div class="nav-section">Filters</div>
+
+  <div class="filter-label">Category</div>
+  <div class="filter-group" id="catFilter"></div>
+
+  <div class="filter-label">Region</div>
+  <div class="filter-group" id="regFilter"></div>
+
+  <div class="filter-label">Quarter</div>
+  <div class="filter-group" id="qtrFilter"></div>
+
+  <div class="sidebar-divider"></div>
+  <div style="font-size:10px;color:var(--muted);text-align:center;margin-top:auto;padding-top:16px">
+    DataPulse v1.0 · 2024
+  </div>
+</aside>
+
+<!-- ── Main ── -->
+<main class="main">
+
+  <!-- Header -->
+  <div class="header">
+    <div>
+      <div class="header-title">⚡ Sales Analytics Dashboard</div>
+      <div class="header-sub">Exploratory Data Analysis · 500 records · 12 features</div>
+    </div>
+    <div class="header-right">
+      <div class="live-badge"><div class="live-dot"></div> Live EDA</div>
+      <label style="cursor:pointer">
+        <div class="live-badge" style="background:#7C6EFA15;border-color:#7C6EFA33;color:var(--a2)">
+          📁 Upload CSV
+        </div>
+        <input type="file" accept=".csv" id="csvUpload" style="display:none" onchange="loadCSV(this)">
+      </label>
+    </div>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="kpi-card c1"><div class="kpi-label">Total Sales</div><div class="kpi-value" id="kpiSales">—</div><div class="kpi-delta up">↑ All Regions Combined</div><div class="kpi-icon">💰</div></div>
+    <div class="kpi-card c2"><div class="kpi-label">Total Profit</div><div class="kpi-value" id="kpiProfit">—</div><div class="kpi-delta up">↑ Net Earnings</div><div class="kpi-icon">📈</div></div>
+    <div class="kpi-card c3"><div class="kpi-label">Avg Rating</div><div class="kpi-value" id="kpiRating">—</div><div class="kpi-delta up">⭐ Customer Score</div><div class="kpi-icon">⭐</div></div>
+    <div class="kpi-card c4"><div class="kpi-label">Transactions</div><div class="kpi-value" id="kpiTrans">—</div><div class="kpi-delta up">↑ Total Orders</div><div class="kpi-icon">🛒</div></div>
+  </div>
+
+  <!-- Trend -->
+  <div class="section-hd">📈 Revenue Trend</div>
+  <div class="grid-1">
+    <div class="chart-card">
+      <div class="chart-title"><span>Monthly Sales & Profit Over Time</span></div>
+      <canvas id="trendChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Category & Region -->
+  <div class="section-hd">🛒 Category & Region Analysis</div>
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-title"><span>Sales by Category</span></div>
+      <canvas id="catBar"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><span>Profit Distribution by Region</span></div>
+      <canvas id="regDoughnut"></canvas>
+    </div>
+  </div>
+
+  <!-- Quarterly & Scatter -->
+  <div class="section-hd">📅 Quarterly Performance</div>
+  <div class="grid-2">
+    <div class="chart-card">
+      <div class="chart-title"><span>Quarterly Sales by Category</span></div>
+      <canvas id="qtrBar"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><span>Sales vs Profit (Bubble = Units)</span></div>
+      <canvas id="scatterChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Distributions -->
+  <div class="section-hd">📊 Data Distributions (EDA)</div>
+  <div class="grid-3">
+    <div class="chart-card">
+      <div class="chart-title"><span>Sales Distribution</span></div>
+      <canvas id="histSales"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><span>Customer Age</span></div>
+      <canvas id="histAge"></canvas>
+    </div>
+    <div class="chart-card">
+      <div class="chart-title"><span>Rating Distribution</span></div>
+      <canvas id="histRating"></canvas>
+    </div>
+  </div>
+
+  <!-- Heatmap -->
+  <div class="section-hd">🗺️ Heatmap: Region × Category</div>
+  <div class="grid-1">
+    <div class="chart-card">
+      <div class="chart-title"><span>Sales Intensity by Region and Category</span></div>
+      <canvas id="heatmap"></canvas>
+    </div>
+  </div>
+
+  <!-- EDA Stats Table -->
+  <div class="section-hd">🔬 EDA Summary Statistics</div>
+  <div class="chart-card">
+    <table class="stats-table" id="statsTable">
+      <thead><tr><th>Field</th><th>Count</th><th>Mean</th><th>Std</th><th>Min</th><th>Max</th><th>Skew</th><th>Distribution</th></tr></thead>
+      <tbody id="statsBody"></tbody>
+    </table>
+  </div>
+
+</main>
+</div>
+
+<script>
+// ── Generate sample data ────────────────────────────────────────────────────────
+function generateData() {
+  const cats    = ['Electronics','Clothing','Food','Sports','Books'];
+  const regions = ['North','South','East','West','Central'];
+  const rows    = [];
+  const now     = new Date('2023-01-01');
+  for (let i = 0; i < 500; i++) {
+    const d = new Date(2023, 0, 1 + Math.floor(Math.random() * 364));
+    rows.push({
+      Date:     d,
+      Category: cats[Math.floor(Math.random() * cats.length)],
+      Region:   regions[Math.floor(Math.random() * regions.length)],
+      Sales:    Math.abs(gaussRand() * 2000 + 5000),
+      Profit:   Math.abs(gaussRand() * 600  + 1200),
+      Units:    Math.floor(Math.random() * 199) + 1,
+      Customer_Age: Math.floor(Math.random() * 52) + 18,
+      Rating:   Math.round((Math.random() * 4 + 1) * 10) / 10,
+      Returns:  Math.random() < 0.15 ? 1 : 0,
+      Quarter:  Math.ceil((d.getMonth() + 1) / 3),
+    });
+  }
+  return rows;
+}
+
+function gaussRand() {
+  let u = 0, v = 0;
+  while (!u) u = Math.random();
+  while (!v) v = Math.random();
+  return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+}
+
+let ALL_DATA = generateData();
+let filteredCats    = new Set(['Electronics','Clothing','Food','Sports','Books']);
+let filteredRegions = new Set(['North','South','East','West','Central']);
+let filteredQtrs    = new Set([1,2,3,4]);
+
+// ── Colors ──────────────────────────────────────────────────────────────────────
+const C = ['#00F5C4','#7C6EFA','#FF6B8A','#FFB830','#4CC9F0'];
+const chartDefaults = {
+  color: '#E2E8F0',
+  borderColor: '#1E2436',
+  backgroundColor: '#141824',
+};
+Chart.defaults.color = '#64748B';
+Chart.defaults.borderColor = '#1E2436';
+
+// ── Chart instances ─────────────────────────────────────────────────────────────
+const charts = {};
+
+function makeChart(id, cfg) {
+  if (charts[id]) charts[id].destroy();
+  charts[id] = new Chart(document.getElementById(id), cfg);
+  return charts[id];
+}
+
+function cardBg() { return '#111422'; }
+function gridColor() { return '#1E243666'; }
+
+// ── Filter chips ───────────────────────────────────────────────────────────────
+function buildChips() {
+  const cats    = ['Electronics','Clothing','Food','Sports','Books'];
+  const regions = ['North','South','East','West','Central'];
+
+  ['catFilter','regFilter','qtrFilter'].forEach(id => document.getElementById(id).innerHTML = '');
+
+  cats.forEach(c => {
+    const el = document.createElement('div');
+    el.className = 'filter-chip active'; el.textContent = c;
+    el.onclick = () => { filteredCats.has(c) ? filteredCats.delete(c) : filteredCats.add(c); render(); };
+    document.getElementById('catFilter').appendChild(el);
+  });
+  regions.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'filter-chip active'; el.textContent = r;
+    el.onclick = () => { filteredRegions.has(r) ? filteredRegions.delete(r) : filteredRegions.add(r); render(); };
+    document.getElementById('regFilter').appendChild(el);
+  });
+  [1,2,3,4].forEach(q => {
+    const el = document.createElement('div');
+    el.className = 'filter-chip active'; el.textContent = `Q${q}`;
+    el.onclick = () => { filteredQtrs.has(q) ? filteredQtrs.delete(q) : filteredQtrs.add(q); render(); };
+    document.getElementById('qtrFilter').appendChild(el);
+  });
+}
+
+function syncChips() {
+  document.querySelectorAll('#catFilter .filter-chip').forEach((el, i) => {
+    const cats = ['Electronics','Clothing','Food','Sports','Books'];
+    el.classList.toggle('active', filteredCats.has(cats[i]));
+  });
+  document.querySelectorAll('#regFilter .filter-chip').forEach((el, i) => {
+    const regs = ['North','South','East','West','Central'];
+    el.classList.toggle('active', filteredRegions.has(regs[i]));
+  });
+  document.querySelectorAll('#qtrFilter .filter-chip').forEach((el, i) => {
+    el.classList.toggle('active', filteredQtrs.has(i + 1));
+  });
+}
+
+// ── Filtered data ──────────────────────────────────────────────────────────────
+function getFiltered() {
+  return ALL_DATA.filter(r =>
+    filteredCats.has(r.Category) &&
+    filteredRegions.has(r.Region) &&
+    filteredQtrs.has(r.Quarter)
+  );
+}
+
+// ── Group helpers ──────────────────────────────────────────────────────────────
+function groupBy(arr, key, agg) {
+  const map = {};
+  arr.forEach(r => {
+    const k = typeof key === 'function' ? key(r) : r[key];
+    if (!map[k]) map[k] = [];
+    map[k].push(r);
+  });
+  const res = {};
+  for (const k in map) res[k] = agg(map[k]);
+  return res;
+}
+
+function sum(arr, f) { return arr.reduce((a, b) => a + (f ? f(b) : b), 0); }
+function avg(arr, f) { return sum(arr, f) / arr.length; }
+function skewness(arr) {
+  const n = arr.length, m = avg(arr);
+  const std = Math.sqrt(arr.reduce((a, b) => a + (b - m) ** 2, 0) / n);
+  return arr.reduce((a, b) => a + ((b - m) / std) ** 3, 0) / n;
+}
+function histogram(arr, bins = 20) {
+  const mn = Math.min(...arr), mx = Math.max(...arr);
+  const w = (mx - mn) / bins;
+  const counts = Array(bins).fill(0);
+  const labels = Array.from({length: bins}, (_, i) => (mn + i * w).toFixed(0));
+  arr.forEach(v => {
+    let b = Math.floor((v - mn) / w);
+    if (b >= bins) b = bins - 1;
+    counts[b]++;
+  });
+  return { labels, counts };
+}
+
+// ── KPI update ─────────────────────────────────────────────────────────────────
+function updateKPIs(fd) {
+  const totalSales  = sum(fd, r => r.Sales);
+  const totalProfit = sum(fd, r => r.Profit);
+  const avgRating   = avg(fd, r => r.Rating);
+  document.getElementById('kpiSales').textContent  = '$' + totalSales.toLocaleString('en', {maximumFractionDigits: 0});
+  document.getElementById('kpiProfit').textContent = '$' + totalProfit.toLocaleString('en', {maximumFractionDigits: 0});
+  document.getElementById('kpiRating').textContent = avgRating.toFixed(2) + ' ★';
+  document.getElementById('kpiTrans').textContent  = fd.length.toLocaleString();
+}
+
+// ── Chart renderers ─────────────────────────────────────────────────────────────
+function renderTrend(fd) {
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const bySales  = new Array(12).fill(0);
+  const byProfit = new Array(12).fill(0);
+  fd.forEach(r => {
+    const m = r.Date.getMonth();
+    bySales[m]  += r.Sales;
+    byProfit[m] += r.Profit;
+  });
+  makeChart('trendChart', {
+    type: 'line',
+    data: {
+      labels: months,
+      datasets: [
+        { label: 'Sales', data: bySales,  borderColor: C[0], backgroundColor: C[0] + '18', fill: true, tension: 0.4, pointRadius: 4, pointBackgroundColor: C[0] },
+        { label: 'Profit', data: byProfit, borderColor: C[1], backgroundColor: C[1] + '18', fill: true, tension: 0.4, pointRadius: 4, pointBackgroundColor: C[1] },
+      ]
+    },
+    options: { responsive: true, plugins: { legend: { labels: { color: '#64748B' } } }, scales: { x: { ticks: { color: '#64748B' }, grid: { color: gridColor() } }, y: { ticks: { color: '#64748B', callback: v => '$' + (v/1000).toFixed(0) + 'k' }, grid: { color: gridColor() } } } }
+  });
+}
+
+function renderCatBar(fd) {
+  const cats = ['Electronics','Clothing','Food','Sports','Books'];
+  const vals = cats.map(c => sum(fd.filter(r => r.Category === c), r => r.Sales));
+  makeChart('catBar', {
+    type: 'bar',
+    data: { labels: cats, datasets: [{ data: vals, backgroundColor: C, borderRadius: 6, borderSkipped: false }] },
+    options: { indexAxis: 'y', responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#64748B', callback: v => '$' + (v/1000).toFixed(0) + 'k' }, grid: { color: gridColor() } }, y: { ticks: { color: '#64748B' }, grid: { display: false } } } }
+  });
+}
+
+function renderRegDoughnut(fd) {
+  const regions = ['North','South','East','West','Central'];
+  const vals = regions.map(r => sum(fd.filter(d => d.Region === r), d => d.Profit));
+  makeChart('regDoughnut', {
+    type: 'doughnut',
+    data: { labels: regions, datasets: [{ data: vals, backgroundColor: C, hoverOffset: 8, borderColor: '#111422', borderWidth: 3 }] },
+    options: { responsive: true, cutout: '60%', plugins: { legend: { labels: { color: '#64748B', padding: 14 } } } }
+  });
+}
+
+function renderQtrBar(fd) {
+  const cats = ['Electronics','Clothing','Food','Sports','Books'];
+  const datasets = cats.map((c, i) => ({
+    label: c, data: [1,2,3,4].map(q => sum(fd.filter(r => r.Quarter === q && r.Category === c), r => r.Sales)),
+    backgroundColor: C[i], borderRadius: 4,
+  }));
+  makeChart('qtrBar', {
+    type: 'bar',
+    data: { labels: ['Q1','Q2','Q3','Q4'], datasets },
+    options: { responsive: true, plugins: { legend: { labels: { color: '#64748B' } } }, scales: { x: { ticks: { color: '#64748B' }, grid: { display: false } }, y: { ticks: { color: '#64748B', callback: v => '$' + (v/1000).toFixed(0) + 'k' }, grid: { color: gridColor() } }, stacked: false } }
+  });
+}
+
+function renderScatter(fd) {
+  const cats = ['Electronics','Clothing','Food','Sports','Books'];
+  const datasets = cats.map((c, i) => {
+    const sub = fd.filter(r => r.Category === c).slice(0, 60);
+    return { label: c, data: sub.map(r => ({ x: r.Sales, y: r.Profit, r: r.Units / 20 })), backgroundColor: C[i] + 'AA', borderColor: 'transparent' };
+  });
+  makeChart('scatterChart', { type: 'bubble', data: { datasets }, options: { responsive: true, plugins: { legend: { labels: { color: '#64748B' } } }, scales: { x: { ticks: { color: '#64748B' }, grid: { color: gridColor() } }, y: { ticks: { color: '#64748B' }, grid: { color: gridColor() } } } } });
+}
+
+function renderHist(id, field, color, fd) {
+  const vals = fd.map(r => r[field]);
+  const { labels, counts } = histogram(vals, 18);
+  makeChart(id, {
+    type: 'bar',
+    data: { labels, datasets: [{ data: counts, backgroundColor: color + 'CC', borderColor: 'transparent', borderRadius: 3, borderSkipped: false }] },
+    options: { responsive: true, plugins: { legend: { display: false } }, scales: { x: { ticks: { color: '#64748B', maxRotation: 0, maxTicksLimit: 6 }, grid: { display: false } }, y: { ticks: { color: '#64748B' }, grid: { color: gridColor() } } } }
+  });
+}
+
+function renderHeatmap(fd) {
+  const cats    = ['Electronics','Clothing','Food','Sports','Books'];
+  const regions = ['North','South','East','West','Central'];
+  const data = [];
+  let maxV = 0;
+  regions.forEach((r, ri) => cats.forEach((c, ci) => {
+    const v = sum(fd.filter(d => d.Region === r && d.Category === c), d => d.Sales);
+    if (v > maxV) maxV = v;
+    data.push({ x: c, y: r, v });
+  }));
+  makeChart('heatmap', {
+    type: 'matrix',
+    data: {
+      datasets: [{
+        data,
+        backgroundColor(ctx) {
+          const v = ctx.dataset.data[ctx.dataIndex]?.v || 0;
+          const t = v / maxV;
+          const r = Math.round(255 * t), g = Math.round(245 - 200 * t), b = Math.round(196 - 180 * t);
+          return `rgba(${r},${g},${b},0.85)`;
+        },
+        borderColor: '#111422', borderWidth: 3,
+        width(ctx) { const a = ctx.chart.chartArea || {}; return (a.right - a.left) / cats.length - 4; },
+        height(ctx) { const a = ctx.chart.chartArea || {}; return (a.bottom - a.top) / regions.length - 4; },
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false }, tooltip: { callbacks: { title: () => '', label: ctx => `${ctx.dataset.data[ctx.dataIndex].x} × ${ctx.dataset.data[ctx.dataIndex].y}: $${Math.round(ctx.dataset.data[ctx.dataIndex].v).toLocaleString()}` } } },
+      scales: {
+        x: { type: 'category', labels: cats, ticks: { color: '#64748B' }, grid: { display: false } },
+        y: { type: 'category', labels: regions, offset: true, ticks: { color: '#64748B' }, grid: { display: false } },
+      }
+    }
+  });
+}
+
+// ── Stats table ────────────────────────────────────────────────────────────────
+function renderStats(fd) {
+  const fields = ['Sales','Profit','Units','Customer_Age','Rating'];
+  const colors = C;
+  const tbody = document.getElementById('statsBody');
+  tbody.innerHTML = '';
+  fields.forEach((f, i) => {
+    const vals = fd.map(r => r[f]);
+    const mn = Math.min(...vals), mx = Math.max(...vals);
+    const me = avg(vals);
+    const std = Math.sqrt(vals.reduce((a, b) => a + (b - me) ** 2, 0) / vals.length);
+    const sk  = skewness(vals).toFixed(2);
+    const pct = ((me - mn) / (mx - mn) * 100).toFixed(0);
+    tbody.innerHTML += `<tr>
+      <td style="color:${colors[i]};font-weight:700">${f}</td>
+      <td>${fd.length}</td>
+      <td>${me.toFixed(1)}</td>
+      <td>${std.toFixed(1)}</td>
+      <td>${mn.toFixed(1)}</td>
+      <td>${mx.toFixed(1)}</td>
+      <td>${sk}</td>
+      <td><div class="bar-cell"><div class="mini-bar" style="width:${pct}%;background:${colors[i]};max-width:120px;min-width:4px"></div><span style="color:var(--muted);font-size:10px">${pct}%</span></div></td>
+    </tr>`;
+  });
+}
+
+// ── Load matrix plugin lazily ──────────────────────────────────────────────────
+function loadMatrixPlugin() {
+  return new Promise(resolve => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/chartjs-chart-matrix/1.3.0/chartjs-chart-matrix.min.js';
+    s.onload = resolve; document.head.appendChild(s);
+  });
+}
+
+// ── Main render ─────────────────────────────────────────────────────────────────
+async function render() {
+  syncChips();
+  const fd = getFiltered();
+  updateKPIs(fd);
+  renderTrend(fd);
+  renderCatBar(fd);
+  renderRegDoughnut(fd);
+  renderQtrBar(fd);
+  renderScatter(fd);
+  renderHist('histSales',  'Sales',        C[0], fd);
+  renderHist('histAge',    'Customer_Age', C[1], fd);
+  renderHist('histRating', 'Rating',       C[2], fd);
+  renderHeatmap(fd);
+  renderStats(fd);
+}
+
+// ── CSV upload ─────────────────────────────────────────────────────────────────
+function loadCSV(input) {
+  const file = input.files[0]; if (!file) return;
+  Papa.parse(file, {
+    header: true, dynamicTyping: true,
+    complete(results) {
+      ALL_DATA = results.data.filter(r => r.Sales).map(r => ({
+        ...r,
+        Date: new Date(r.Date || Date.now()),
+        Category: r.Category || 'Other',
+        Region:   r.Region   || 'Other',
+        Quarter:  r.Quarter  || 1,
+      }));
+      const cats = [...new Set(ALL_DATA.map(r => r.Category))];
+      const regs = [...new Set(ALL_DATA.map(r => r.Region))];
+      filteredCats    = new Set(cats);
+      filteredRegions = new Set(regs);
+      filteredQtrs    = new Set([1,2,3,4]);
+      buildChips(); render();
+    }
+  });
+}
+
+// ── Init ───────────────────────────────────────────────────────────────────────
+loadMatrixPlugin().then(() => { buildChips(); render(); });
+</script>
+</body>
+</html>
