@@ -2,8 +2,6 @@
 
 A full deployable **Streamlit data analysis dashboard** built for a project like:
 
-> Pick a fun public dataset and do exploratory data analysis. Build a dashboard and explain 5 interesting insights.
-
 This version uses **live Indian stock-market data** from Yahoo Finance for popular NSE-listed companies, so the dashboard stays useful even after deployment.
 
 ## What this project shows
