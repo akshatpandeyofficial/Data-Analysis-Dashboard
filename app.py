@@ -46,6 +46,8 @@ SECTOR_MAP = {
 
 
 def format_pct(value: float) -> str:
+    if pd.isna(value):
+        return "N/A"
     return f"{value:.2f}%"
 
 
@@ -53,11 +55,16 @@ def format_pct(value: float) -> str:
 def load_data(symbols, start_date, end_date):
     frames = []
     for symbol in symbols:
-        df = yf.download(symbol, start=start_date, end=end_date + timedelta(days=1), auto_adjust=False, progress=False)
+        df = yf.download(
+            symbol,
+            start=start_date,
+            end=end_date + timedelta(days=1),
+            auto_adjust=False,
+            progress=False
+        )
         if df.empty:
             continue
 
-        # Flatten columns if yfinance returns a MultiIndex
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [c[0] for c in df.columns]
 
@@ -78,13 +85,17 @@ def load_data(symbols, start_date, end_date):
     data = pd.concat(frames, ignore_index=True)
     data["Date"] = pd.to_datetime(data["Date"])
     data = data.sort_values(["Symbol", "Date"]).reset_index(drop=True)
+
     data["Daily Return %"] = data.groupby("Symbol")["Close"].pct_change() * 100
     data["SMA 20"] = data.groupby("Symbol")["Close"].transform(lambda s: s.rolling(20).mean())
     data["SMA 50"] = data.groupby("Symbol")["Close"].transform(lambda s: s.rolling(50).mean())
-    data["Volatility 20D %"] = (
-        data.groupby("Symbol")["Daily Return %"].transform(lambda s: s.rolling(20).std() * np.sqrt(252))
+    data["Volatility 20D %"] = data.groupby("Symbol")["Daily Return %"].transform(
+        lambda s: s.rolling(20).std() * np.sqrt(252)
     )
+    data["Volume MA 20"] = data.groupby("Symbol")["Volume"].transform(lambda s: s.rolling(20).mean())
+    data["Volume Ratio"] = data["Volume"] / data["Volume MA 20"]
     data["Month"] = data["Date"].dt.to_period("M").dt.to_timestamp()
+
     return data
 
 
@@ -149,6 +160,14 @@ def generate_insights(stock_df: pd.DataFrame, company_name: str):
     return insights[:5]
 
 
+def get_volume_spikes(stock_df: pd.DataFrame, threshold: float):
+    spikes = stock_df.copy()
+    spikes = spikes.dropna(subset=["Volume Ratio", "Daily Return %"])
+    spikes = spikes[spikes["Volume Ratio"] >= threshold].copy()
+    spikes = spikes.sort_values("Date", ascending=False)
+    return spikes
+
+
 st.title("📈 Indian Stock Market Data Analysis Dashboard")
 st.caption("A full deployable Streamlit project built around live public stock-market data from Yahoo Finance.")
 
@@ -169,6 +188,17 @@ with st.sidebar:
         st.stop()
 
     benchmark = st.selectbox("Benchmark for comparison", ["^NSEI", "^BSESN"], index=0)
+
+    st.markdown("---")
+    st.subheader("New Feature")
+    volume_spike_threshold = st.slider(
+        "Volume spike threshold (x times 20-day avg)",
+        min_value=1.0,
+        max_value=5.0,
+        value=2.0,
+        step=0.1
+    )
+
     st.markdown("---")
     st.markdown("**Tip:** use 2–5 stocks to unlock the comparison and correlation views.")
 
@@ -176,7 +206,13 @@ symbols = [NSE_SYMBOLS[name] for name in selected_names]
 
 with st.spinner("Fetching live market data..."):
     data = load_data(tuple(symbols), start_date, end_date)
-    benchmark_df = yf.download(benchmark, start=start_date, end=end_date + timedelta(days=1), auto_adjust=False, progress=False)
+    benchmark_df = yf.download(
+        benchmark,
+        start=start_date,
+        end=end_date + timedelta(days=1),
+        auto_adjust=False,
+        progress=False
+    )
     if isinstance(benchmark_df.columns, pd.MultiIndex):
         benchmark_df.columns = [c[0] for c in benchmark_df.columns]
     if not benchmark_df.empty:
@@ -211,7 +247,12 @@ with left:
     fig_price.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["Close"], mode="lines", name="Close"))
     fig_price.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["SMA 20"], mode="lines", name="SMA 20"))
     fig_price.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["SMA 50"], mode="lines", name="SMA 50"))
-    fig_price.update_layout(title=f"{selected_company} Price Trend", xaxis_title="Date", yaxis_title="Price (₹)", height=430)
+    fig_price.update_layout(
+        title=f"{selected_company} Price Trend",
+        xaxis_title="Date",
+        yaxis_title="Price (₹)",
+        height=430
+    )
     st.plotly_chart(fig_price, use_container_width=True)
 
 with right:
@@ -238,7 +279,14 @@ st.subheader("Compare multiple stocks")
 comparison = data[["Date", "Company", "Close", "Daily Return %", "Volume"]].copy()
 comparison["Normalized Close"] = comparison.groupby("Company")["Close"].transform(lambda s: s / s.iloc[0] * 100)
 
-fig_compare = px.line(comparison, x="Date", y="Normalized Close", color="Company", title="Normalized Performance (Base = 100)")
+fig_compare = px.line(
+    comparison,
+    x="Date",
+    y="Normalized Close",
+    color="Company",
+    title="Normalized Performance (Base = 100)"
+)
+
 if not benchmark_df.empty:
     benchmark_base = benchmark_df["Close"].iloc[0]
     benchmark_df["Normalized Close"] = benchmark_df["Close"] / benchmark_base * 100
@@ -251,10 +299,12 @@ if not benchmark_df.empty:
             name=benchmark_name,
         )
     )
+
 fig_compare.update_layout(height=430)
 st.plotly_chart(fig_compare, use_container_width=True)
 
 heat_left, heat_right = st.columns(2)
+
 with heat_left:
     corr_source = comparison.pivot_table(index="Date", columns="Company", values="Daily Return %")
     if corr_source.shape[1] >= 2:
@@ -269,16 +319,84 @@ with heat_right:
     sector_perf = comparison.groupby("Company", as_index=False).agg({"Close": ["first", "last"]})
     sector_perf.columns = ["Company", "Start", "End"]
     sector_perf["Return %"] = ((sector_perf["End"] / sector_perf["Start"]) - 1) * 100
-    fig_sector = px.bar(sector_perf.sort_values("Return %", ascending=False), x="Company", y="Return %", title="Stock Returns Ranking")
+    fig_sector = px.bar(
+        sector_perf.sort_values("Return %", ascending=False),
+        x="Company",
+        y="Return %",
+        title="Stock Returns Ranking"
+    )
     fig_sector.update_layout(height=400)
     st.plotly_chart(fig_sector, use_container_width=True)
 
+# NEW FEATURE SECTION
+st.subheader("🚀 New Feature: Volume Spike Detector")
+
+spike_df = get_volume_spikes(stock_df, volume_spike_threshold)
+
+vol_left, vol_right = st.columns([2, 1])
+
+with vol_left:
+    fig_volume = go.Figure()
+    fig_volume.add_trace(go.Bar(x=stock_df["Date"], y=stock_df["Volume"], name="Daily Volume"))
+    fig_volume.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["Volume MA 20"], mode="lines", name="20-Day Avg Volume"))
+
+    if not spike_df.empty:
+        fig_volume.add_trace(
+            go.Scatter(
+                x=spike_df["Date"],
+                y=spike_df["Volume"],
+                mode="markers",
+                name="Spike Days",
+                marker=dict(size=10, symbol="diamond")
+            )
+        )
+
+    fig_volume.update_layout(
+        title=f"{selected_company} Volume Activity",
+        xaxis_title="Date",
+        yaxis_title="Volume",
+        height=420
+    )
+    st.plotly_chart(fig_volume, use_container_width=True)
+
+with vol_right:
+    st.markdown(f"**Spike Rule:** Volume ≥ {volume_spike_threshold:.1f} × 20-day average")
+    st.metric("Spike Days Found", len(spike_df))
+
+    if not spike_df.empty:
+        latest_spike = spike_df.iloc[0]
+        st.success(
+            f"Latest spike: {latest_spike['Date'].date()} | "
+            f"Volume Ratio: {latest_spike['Volume Ratio']:.2f}x"
+        )
+    else:
+        st.info("No spike days found for this threshold.")
+
+if not spike_df.empty:
+    st.dataframe(
+        spike_df[["Date", "Close", "Volume", "Volume MA 20", "Volume Ratio", "Daily Return %"]]
+        .rename(columns={
+            "Close": "Close Price",
+            "Volume MA 20": "20D Avg Volume",
+            "Volume Ratio": "Volume Ratio",
+            "Daily Return %": "Daily Return %"
+        }),
+        use_container_width=True,
+        hide_index=True
+    )
+else:
+    st.info("Try lowering the spike threshold from the sidebar to detect more unusual volume days.")
+
 st.subheader("Raw data and export")
-view_cols = ["Date", "Company", "Sector", "Open", "High", "Low", "Close", "Volume", "Daily Return %", "SMA 20", "SMA 50", "Volatility 20D %"]
+view_cols = [
+    "Date", "Company", "Sector", "Open", "High", "Low", "Close", "Volume",
+    "Daily Return %", "SMA 20", "SMA 50", "Volatility 20D %", "Volume MA 20", "Volume Ratio"
+]
 st.dataframe(data[view_cols], use_container_width=True, hide_index=True)
 
 csv_buffer = io.StringIO()
 data[view_cols].to_csv(csv_buffer, index=False)
+
 st.download_button(
     label="Download filtered data as CSV",
     data=csv_buffer.getvalue(),
