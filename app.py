@@ -72,7 +72,7 @@ def load_data(symbols, start_date, end_date):
         if "Date" not in df.columns:
             df = df.rename(columns={df.columns[0]: "Date"})
 
-        keep_cols = [c for c in ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"] if c in df.columns]
+        keep_cols = [c for c in ["Date","Open", "High", "Low", "Close", "Adj Close", "Volume"] if c in df.columns]
         df = df[keep_cols].copy()
         df["Symbol"] = symbol
         df["Company"] = next((k for k, v in NSE_SYMBOLS.items() if v == symbol), symbol)
