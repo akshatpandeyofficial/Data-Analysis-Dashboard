@@ -306,7 +306,7 @@ def generate_insights(stock_df: pd.DataFrame, company_name: str):
 market_text, now_ist = market_status_ist()
 
 st.title("📈 Indian Stock Market Dashboard")
-st.caption("Clean one-page dashboard for Indian stocks with live fluctuation, single-stock analysis, and separate multiple-stock comparison.")
+st.caption(" Dashboard for Indian stocks with live fluctuation and separate multiple-stock comparison.")
 
 top_a, top_b, top_c = st.columns([1.7, 1.2, 1.1])
 
