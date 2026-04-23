@@ -1,5 +1,6 @@
 import io
-from datetime import date, timedelta
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 import numpy as np
 import pandas as pd
@@ -7,13 +8,16 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 import yfinance as yf
+from streamlit_autorefresh import st_autorefresh
 
+# -------------------- PAGE SETUP --------------------
 st.set_page_config(
     page_title="Indian Stock Market Dashboard",
     page_icon="📈",
     layout="wide",
 )
 
+# -------------------- STOCK MASTER --------------------
 NSE_SYMBOLS = {
     "Reliance Industries": "RELIANCE.NS",
     "TCS": "TCS.NS",
@@ -27,6 +31,24 @@ NSE_SYMBOLS = {
     "Bharti Airtel": "BHARTIARTL.NS",
     "Axis Bank": "AXISBANK.NS",
     "Maruti Suzuki": "MARUTI.NS",
+    "Bajaj Finance": "BAJFINANCE.NS",
+    "Kotak Mahindra Bank": "KOTAKBANK.NS",
+    "HCL Technologies": "HCLTECH.NS",
+    "Wipro": "WIPRO.NS",
+    "Asian Paints": "ASIANPAINT.NS",
+    "Titan Company": "TITAN.NS",
+    "Sun Pharma": "SUNPHARMA.NS",
+    "NTPC": "NTPC.NS",
+    "Power Grid": "POWERGRID.NS",
+    "UltraTech Cement": "ULTRACEMCO.NS",
+    "Tata Motors": "TATAMOTORS.NS",
+    "Adani Enterprises": "ADANIENT.NS",
+    "Nestle India": "NESTLEIND.NS",
+    "Bajaj Auto": "BAJAJ-AUTO.NS",
+    "IndusInd Bank": "INDUSINDBK.NS",
+    "Tech Mahindra": "TECHM.NS",
+    "JSW Steel": "JSWSTEEL.NS",
+    "Mahindra & Mahindra": "M&M.NS",
 }
 
 SECTOR_MAP = {
@@ -42,26 +64,71 @@ SECTOR_MAP = {
     "BHARTIARTL.NS": "Telecom",
     "AXISBANK.NS": "Banking",
     "MARUTI.NS": "Automobile",
+    "BAJFINANCE.NS": "Financial Services",
+    "KOTAKBANK.NS": "Banking",
+    "HCLTECH.NS": "IT",
+    "WIPRO.NS": "IT",
+    "ASIANPAINT.NS": "FMCG",
+    "TITAN.NS": "Consumer",
+    "SUNPHARMA.NS": "Pharma",
+    "NTPC.NS": "Power",
+    "POWERGRID.NS": "Power",
+    "ULTRACEMCO.NS": "Cement",
+    "TATAMOTORS.NS": "Automobile",
+    "ADANIENT.NS": "Conglomerate",
+    "NESTLEIND.NS": "FMCG",
+    "BAJAJ-AUTO.NS": "Automobile",
+    "INDUSINDBK.NS": "Banking",
+    "TECHM.NS": "IT",
+    "JSWSTEEL.NS": "Metals",
+    "M&M.NS": "Automobile",
 }
 
+PERIOD_OPTIONS = {
+    "1 Month": "1mo",
+    "3 Months": "3mo",
+    "6 Months": "6mo",
+    "1 Year": "1y",
+    "3 Years": "3y",
+    "5 Years": "5y",
+}
 
+# -------------------- HELPERS --------------------
 def format_pct(value: float) -> str:
     if pd.isna(value):
         return "N/A"
     return f"{value:.2f}%"
 
+def format_inr(value: float) -> str:
+    if pd.isna(value):
+        return "N/A"
+    return f"₹{value:,.2f}"
 
-@st.cache_data(show_spinner=False)
-def load_data(symbols, start_date, end_date):
+def market_status_ist():
+    now_ist = datetime.now(ZoneInfo("Asia/Kolkata"))
+    weekday = now_ist.weekday()
+    current_minutes = now_ist.hour * 60 + now_ist.minute
+    open_minutes = 9 * 60 + 15
+    close_minutes = 15 * 60 + 30
+
+    is_open = weekday < 5 and open_minutes <= current_minutes <= close_minutes
+    status = "Market Open" if is_open else "Market Closed"
+    return status, now_ist
+
+@st.cache_data(show_spinner=False, ttl=600)
+def load_historical_data(symbols, period):
     frames = []
+
     for symbol in symbols:
         df = yf.download(
             symbol,
-            start=start_date,
-            end=end_date + timedelta(days=1),
+            period=period,
+            interval="1d",
             auto_adjust=False,
-            progress=False
+            progress=False,
+            threads=False,
         )
+
         if df.empty:
             continue
 
@@ -69,18 +136,20 @@ def load_data(symbols, start_date, end_date):
             df.columns = [c[0] for c in df.columns]
 
         df = df.reset_index()
+
         if "Date" not in df.columns:
             df = df.rename(columns={df.columns[0]: "Date"})
 
-        keep_cols = [c for c in ["Date","Open", "High", "Low", "Close", "Adj Close", "Volume"] if c in df.columns]
+        keep_cols = [c for c in ["Date", "Open", "High", "Low", "Close", "Adj Close", "Volume"] if c in df.columns]
         df = df[keep_cols].copy()
+
         df["Symbol"] = symbol
         df["Company"] = next((k for k, v in NSE_SYMBOLS.items() if v == symbol), symbol)
         df["Sector"] = SECTOR_MAP.get(symbol, "Other")
         frames.append(df)
 
     if not frames:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
 
     data = pd.concat(frames, ignore_index=True)
     data["Date"] = pd.to_datetime(data["Date"])
@@ -89,17 +158,105 @@ def load_data(symbols, start_date, end_date):
     data["Daily Return %"] = data.groupby("Symbol")["Close"].pct_change() * 100
     data["SMA 20"] = data.groupby("Symbol")["Close"].transform(lambda s: s.rolling(20).mean())
     data["SMA 50"] = data.groupby("Symbol")["Close"].transform(lambda s: s.rolling(50).mean())
-    data["Volatility 20D %"] = data.groupby("Symbol")["Daily Return %"].transform(
-        lambda s: s.rolling(20).std() * np.sqrt(252)
-    )
-    data["Volume MA 20"] = data.groupby("Symbol")["Volume"].transform(lambda s: s.rolling(20).mean())
-    data["Volume Ratio"] = data["Volume"] / data["Volume MA 20"]
+
+    delta = data.groupby("Symbol")["Close"].diff()
+    gain = delta.where(delta > 0, 0.0)
+    loss = -delta.where(delta < 0, 0.0)
+
+    avg_gain = gain.groupby(data["Symbol"]).transform(lambda s: s.rolling(14).mean())
+    avg_loss = loss.groupby(data["Symbol"]).transform(lambda s: s.rolling(14).mean())
+
+    rs = avg_gain / avg_loss.replace(0, np.nan)
+    data["RSI 14"] = 100 - (100 / (1 + rs))
+
+    data["5D Return %"] = data.groupby("Symbol")["Close"].pct_change(periods=5) * 100
+    data["20D High"] = data.groupby("Symbol")["High"].transform(lambda s: s.rolling(20).max())
+    data["20D Low"] = data.groupby("Symbol")["Low"].transform(lambda s: s.rolling(20).min())
     data["Month"] = data["Date"].dt.to_period("M").dt.to_timestamp()
 
-    return data
+    monthly_close = (
+        data.groupby(["Company", "Month"], as_index=False)["Close"]
+        .last()
+        .sort_values(["Company", "Month"])
+    )
+    monthly_close["Monthly Return %"] = monthly_close.groupby("Company")["Close"].pct_change() * 100
 
+    return data, monthly_close
 
-def compute_summary(stock_df: pd.DataFrame):
+@st.cache_data(show_spinner=False, ttl=60)
+def load_live_snapshot(symbols):
+    rows = []
+
+    for symbol in symbols:
+        company = next((k for k, v in NSE_SYMBOLS.items() if v == symbol), symbol)
+        sector = SECTOR_MAP.get(symbol, "Other")
+
+        try:
+            ticker = yf.Ticker(symbol)
+
+            intraday = ticker.history(period="2d", interval="1m", auto_adjust=False)
+            daily = ticker.history(period="5d", interval="1d", auto_adjust=False)
+
+            if intraday.empty and daily.empty:
+                continue
+
+            if not intraday.empty:
+                last_price = float(intraday["Close"].dropna().iloc[-1])
+                last_time = intraday.index[-1]
+            else:
+                last_price = float(daily["Close"].dropna().iloc[-1])
+                last_time = daily.index[-1]
+
+            if len(daily.dropna(subset=["Close"])) >= 2:
+                prev_close = float(daily["Close"].dropna().iloc[-2])
+            else:
+                prev_close = np.nan
+
+            change = last_price - prev_close if pd.notna(prev_close) else np.nan
+            change_pct = ((last_price / prev_close) - 1) * 100 if pd.notna(prev_close) and prev_close != 0 else np.nan
+
+            rows.append(
+                {
+                    "Company": company,
+                    "Symbol": symbol,
+                    "Sector": sector,
+                    "Live Price": last_price,
+                    "Prev Close": prev_close,
+                    "Change": change,
+                    "Change %": change_pct,
+                    "Last Updated": pd.to_datetime(last_time),
+                }
+            )
+        except Exception:
+            continue
+
+    if not rows:
+        return pd.DataFrame()
+
+    live_df = pd.DataFrame(rows).sort_values("Change %", ascending=False).reset_index(drop=True)
+    return live_df
+
+@st.cache_data(show_spinner=False, ttl=20)
+def load_live_intraday(symbol):
+    try:
+        ticker = yf.Ticker(symbol)
+        live_df = ticker.history(period="1d", interval="1m", auto_adjust=False)
+
+        if live_df.empty:
+            return pd.DataFrame()
+
+        live_df = live_df.reset_index()
+
+        if "Datetime" not in live_df.columns:
+            live_df = live_df.rename(columns={live_df.columns[0]: "Datetime"})
+
+        live_df["Datetime"] = pd.to_datetime(live_df["Datetime"])
+        return live_df
+
+    except Exception:
+        return pd.DataFrame()
+
+def build_summary(stock_df: pd.DataFrame, monthly_df: pd.DataFrame):
     stock_df = stock_df.dropna(subset=["Close"]).copy()
     if stock_df.empty:
         return None
@@ -107,305 +264,540 @@ def compute_summary(stock_df: pd.DataFrame):
     latest_close = float(stock_df["Close"].iloc[-1])
     first_close = float(stock_df["Close"].iloc[0])
     period_return = ((latest_close / first_close) - 1) * 100 if first_close else np.nan
+
+    latest_daily_return = float(stock_df["Daily Return %"].iloc[-1]) if stock_df["Daily Return %"].notna().any() else np.nan
+    high_price = float(stock_df["High"].max()) if "High" in stock_df.columns else np.nan
+    low_price = float(stock_df["Low"].min()) if "Low" in stock_df.columns else np.nan
     avg_volume = float(stock_df["Volume"].mean()) if "Volume" in stock_df.columns else np.nan
-    volatility = float(stock_df["Daily Return %"].std() * np.sqrt(252)) if stock_df["Daily Return %"].notna().any() else np.nan
-    high_52 = float(stock_df["High"].max()) if "High" in stock_df.columns else np.nan
-    low_52 = float(stock_df["Low"].min()) if "Low" in stock_df.columns else np.nan
+    latest_rsi = float(stock_df["RSI 14"].iloc[-1]) if "RSI 14" in stock_df.columns and stock_df["RSI 14"].notna().any() else np.nan
+
+    latest_monthly_return = np.nan
+    monthly_df = monthly_df.dropna(subset=["Monthly Return %"])
+    if not monthly_df.empty:
+        latest_monthly_return = float(monthly_df["Monthly Return %"].iloc[-1])
 
     return {
         "latest_close": latest_close,
         "period_return": period_return,
+        "latest_daily_return": latest_daily_return,
+        "latest_monthly_return": latest_monthly_return,
+        "high": high_price,
+        "low": low_price,
         "avg_volume": avg_volume,
-        "volatility": volatility,
-        "high": high_52,
-        "low": low_52,
+        "latest_rsi": latest_rsi,
     }
-
 
 def generate_insights(stock_df: pd.DataFrame, company_name: str):
     insights = []
     clean = stock_df.dropna(subset=["Close"]).copy()
+
     if clean.empty:
-        return ["No data available for the selected range."]
+        return ["No data available for this stock in the selected range."]
 
     latest = clean.iloc[-1]
     first = clean.iloc[0]
     period_return = ((latest["Close"] / first["Close"]) - 1) * 100 if first["Close"] else np.nan
-    insights.append(f"{company_name} moved {period_return:.2f}% across the selected period.")
+    insights.append(f"{company_name} moved {period_return:.2f}% in the selected period.")
 
     if pd.notna(latest.get("SMA 20")) and pd.notna(latest.get("SMA 50")):
         if latest["SMA 20"] > latest["SMA 50"]:
-            insights.append("Short-term momentum is stronger than the medium-term trend because SMA 20 is above SMA 50.")
+            insights.append("Short-term trend is stronger because SMA 20 is above SMA 50.")
         else:
-            insights.append("Short-term momentum is weaker than the medium-term trend because SMA 20 is below SMA 50.")
+            insights.append("Short-term trend is softer because SMA 20 is below SMA 50.")
+
+    if pd.notna(latest.get("RSI 14")):
+        if latest["RSI 14"] > 70:
+            insights.append("RSI is above 70, so the stock may be overbought.")
+        elif latest["RSI 14"] < 30:
+            insights.append("RSI is below 30, so the stock may be oversold.")
+        else:
+            insights.append("RSI is in a balanced zone.")
 
     if clean["Daily Return %"].notna().sum() > 5:
         best_day = clean.loc[clean["Daily Return %"].idxmax()]
         worst_day = clean.loc[clean["Daily Return %"].idxmin()]
         insights.append(
-            f"Best single trading day: {best_day['Date'].date()} ({best_day['Daily Return %']:.2f}%). "
-            f"Worst single trading day: {worst_day['Date'].date()} ({worst_day['Daily Return %']:.2f}%)."
+            f"Best day: {best_day['Date'].date()} ({best_day['Daily Return %']:.2f}%). "
+            f"Worst day: {worst_day['Date'].date()} ({worst_day['Daily Return %']:.2f}%)."
         )
 
-    positive_ratio = (clean["Daily Return %"] > 0).mean() * 100
-    insights.append(f"The stock closed positive on {positive_ratio:.1f}% of trading sessions in this range.")
+    return insights[:4]
 
-    rolling_vol = clean["Volatility 20D %"].dropna()
-    if not rolling_vol.empty:
-        insights.append(
-            f"20-day annualized volatility recently stood near {rolling_vol.iloc[-1]:.2f}%, "
-            f"compared with an average of {rolling_vol.mean():.2f}% over the selected range."
-        )
+def get_predictive_signal(stock_df: pd.DataFrame):
+    clean = stock_df.dropna(subset=["Close"]).copy()
 
-    return insights[:5]
+    if clean.empty or len(clean) < 50:
+        return {
+            "signal": "Not Enough Data",
+            "score": 0,
+            "confidence": "Low",
+            "reason": ["Need at least 50 data points for signal generation."]
+        }
 
+    latest = clean.iloc[-1]
+    reasons = []
+    score = 0
 
-def get_volume_spikes(stock_df: pd.DataFrame, threshold: float):
-    spikes = stock_df.copy()
-    spikes = spikes.dropna(subset=["Volume Ratio", "Daily Return %"])
-    spikes = spikes[spikes["Volume Ratio"] >= threshold].copy()
-    spikes = spikes.sort_values("Date", ascending=False)
-    return spikes
+    if pd.notna(latest.get("SMA 20")) and pd.notna(latest.get("SMA 50")):
+        if latest["SMA 20"] > latest["SMA 50"]:
+            score += 2
+            reasons.append("SMA 20 is above SMA 50, showing bullish trend.")
+        else:
+            score -= 2
+            reasons.append("SMA 20 is below SMA 50, showing bearish trend.")
 
+    if pd.notna(latest.get("RSI 14")):
+        if latest["RSI 14"] < 35:
+            score += 2
+            reasons.append("RSI is below 35, stock may be oversold and could bounce.")
+        elif latest["RSI 14"] > 70:
+            score -= 2
+            reasons.append("RSI is above 70, stock may be overbought.")
+        elif 45 <= latest["RSI 14"] <= 65:
+            score += 1
+            reasons.append("RSI is in a healthy momentum zone.")
 
-st.title("📈 Indian Stock Market Data Analysis Dashboard")
-st.caption("A full deployable Streamlit project built around live public stock-market data from Yahoo Finance.")
+    if pd.notna(latest.get("5D Return %")):
+        if latest["5D Return %"] > 2:
+            score += 1
+            reasons.append("Recent 5-day momentum is positive.")
+        elif latest["5D Return %"] < -2:
+            score -= 1
+            reasons.append("Recent 5-day momentum is negative.")
 
-with st.sidebar:
-    st.header("Controls")
-    selected_names = st.multiselect(
-        "Pick 1–5 Indian stocks",
+    if pd.notna(latest.get("20D High")) and latest["Close"] >= latest["20D High"] * 0.995:
+        score += 2
+        reasons.append("Price is near 20-day high, indicating breakout strength.")
+
+    if pd.notna(latest.get("20D Low")) and latest["Close"] <= latest["20D Low"] * 1.005:
+        score -= 2
+        reasons.append("Price is near 20-day low, indicating weakness.")
+
+    if score >= 4:
+        signal = "BUY"
+        confidence = "High"
+    elif score >= 2:
+        signal = "BUY (Watch)"
+        confidence = "Medium"
+    elif score <= -4:
+        signal = "SELL"
+        confidence = "High"
+    elif score <= -2:
+        signal = "SELL (Watch)"
+        confidence = "Medium"
+    else:
+        signal = "HOLD"
+        confidence = "Medium"
+
+    return {
+        "signal": signal,
+        "score": score,
+        "confidence": confidence,
+        "reason": reasons[:4]
+    }
+
+def build_signal_table(historical_data: pd.DataFrame, comparison_names):
+    rows = []
+
+    for company in comparison_names:
+        temp_df = historical_data[historical_data["Company"] == company].copy()
+        result = get_predictive_signal(temp_df)
+
+        close_series = temp_df["Close"].dropna()
+        latest_close = close_series.iloc[-1] if not close_series.empty else np.nan
+
+        rows.append({
+            "Company": company,
+            "Latest Close": round(latest_close, 2) if pd.notna(latest_close) else np.nan,
+            "Signal": result["signal"],
+            "Score": result["score"],
+            "Confidence": result["confidence"]
+        })
+
+    return pd.DataFrame(rows).sort_values("Score", ascending=False)
+
+# -------------------- TITLE --------------------
+market_text, now_ist = market_status_ist()
+
+st.title("📈 Indian Stock Market Dashboard")
+st.caption("Dashboard for Indian stocks with live fluctuation, predictive signals, and multiple-stock comparison.")
+
+top_a, top_b, top_c = st.columns([1.7, 1.2, 1.1])
+
+with top_a:
+    selected_company = st.selectbox(
+        "Select one Indian stock for full analysis",
         options=list(NSE_SYMBOLS.keys()),
-        default=["Reliance Industries", "TCS", "Infosys"],
-        max_selections=5,
+        index=0,
     )
 
-    end_date = st.date_input("End date", value=date.today())
-    start_date = st.date_input("Start date", value=date.today() - timedelta(days=365))
+with top_b:
+    selected_period_label = st.selectbox(
+        "Analysis range",
+        options=list(PERIOD_OPTIONS.keys()),
+        index=3,
+    )
+    selected_period = PERIOD_OPTIONS[selected_period_label]
 
-    if start_date >= end_date:
-        st.error("Start date must be before end date.")
-        st.stop()
-
-    benchmark = st.selectbox("Benchmark for comparison", ["^NSEI", "^BSESN"], index=0)
-
-    st.markdown("---")
-    st.subheader("New Feature")
-    volume_spike_threshold = st.slider(
-        "Volume spike threshold (x times 20-day avg)",
-        min_value=1.0,
-        max_value=5.0,
-        value=2.0,
-        step=0.1
+with top_c:
+    show_sma = st.checkbox("Show SMA 20 / SMA 50", value=True)
+    st.markdown(
+        f"""
+        <div style="padding:10px 14px;border-radius:14px;background:#0f172a;color:white;margin-top:8px;">
+            <div style="font-size:14px;font-weight:600;">{market_text}</div>
+            <div style="font-size:12px;opacity:0.8;">IST: {now_ist.strftime('%d %b %Y, %I:%M %p')}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
-    st.markdown("---")
-    st.markdown("**Tip:** use 2–5 stocks to unlock the comparison and correlation views.")
-
-symbols = [NSE_SYMBOLS[name] for name in selected_names]
-
-with st.spinner("Fetching live market data..."):
-    data = load_data(tuple(symbols), start_date, end_date)
-    benchmark_df = yf.download(
-        benchmark,
-        start=start_date,
-        end=end_date + timedelta(days=1),
-        auto_adjust=False,
-        progress=False
-    )
-    if isinstance(benchmark_df.columns, pd.MultiIndex):
-        benchmark_df.columns = [c[0] for c in benchmark_df.columns]
-    if not benchmark_df.empty:
-        benchmark_df = benchmark_df.reset_index()[["Date", "Close"]]
-        benchmark_df["Date"] = pd.to_datetime(benchmark_df["Date"])
-
-if data.empty:
-    st.warning("No data could be loaded. Try another stock or a different date range.")
-    st.stop()
-
-selected_company = st.selectbox("Detailed analysis for", options=selected_names, index=0)
-selected_symbol = NSE_SYMBOLS[selected_company]
-stock_df = data[data["Symbol"] == selected_symbol].copy()
-summary = compute_summary(stock_df)
-
-col1, col2, col3, col4 = st.columns(4)
-col1.metric("Latest Close", f"₹{summary['latest_close']:.2f}")
-col2.metric("Period Return", format_pct(summary["period_return"]))
-col3.metric("Avg Volume", f"{summary['avg_volume']:,.0f}")
-col4.metric("Annualized Volatility", format_pct(summary["volatility"]))
-
-col5, col6 = st.columns(2)
-with col5:
-    st.info(f"52-week range in selected period: ₹{summary['low']:.2f} to ₹{summary['high']:.2f}")
-with col6:
-    st.success(f"Rows loaded: {len(data):,} | Stocks compared: {data['Symbol'].nunique()}")
-
-left, right = st.columns([2, 1])
-
-with left:
-    fig_price = go.Figure()
-    fig_price.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["Close"], mode="lines", name="Close"))
-    fig_price.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["SMA 20"], mode="lines", name="SMA 20"))
-    fig_price.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["SMA 50"], mode="lines", name="SMA 50"))
-    fig_price.update_layout(
-        title=f"{selected_company} Price Trend",
-        xaxis_title="Date",
-        yaxis_title="Price (₹)",
-        height=430
-    )
-    st.plotly_chart(fig_price, use_container_width=True)
-
-with right:
-    st.subheader("5 quick insights")
-    for idx, insight in enumerate(generate_insights(stock_df, selected_company), start=1):
-        st.markdown(f"**{idx}.** {insight}")
-
-col_a, col_b = st.columns(2)
-
-with col_a:
-    hist_df = stock_df.dropna(subset=["Daily Return %"])
-    fig_hist = px.histogram(hist_df, x="Daily Return %", nbins=40, title="Daily Returns Distribution")
-    fig_hist.update_layout(height=380)
-    st.plotly_chart(fig_hist, use_container_width=True)
-
-with col_b:
-    monthly = stock_df.groupby("Month", as_index=False).agg({"Close": "last"})
-    monthly["Monthly Return %"] = monthly["Close"].pct_change() * 100
-    fig_monthly = px.bar(monthly, x="Month", y="Monthly Return %", title="Monthly Return %")
-    fig_monthly.update_layout(height=380)
-    st.plotly_chart(fig_monthly, use_container_width=True)
-
-st.subheader("Compare multiple stocks")
-comparison = data[["Date", "Company", "Close", "Daily Return %", "Volume"]].copy()
-comparison["Normalized Close"] = comparison.groupby("Company")["Close"].transform(lambda s: s / s.iloc[0] * 100)
-
-fig_compare = px.line(
-    comparison,
-    x="Date",
-    y="Normalized Close",
-    color="Company",
-    title="Normalized Performance (Base = 100)"
+st.markdown("### Compare Multiple Stocks")
+comparison_names = st.multiselect(
+    "Select stocks for comparison charts",
+    options=list(NSE_SYMBOLS.keys()),
+    default=[selected_company, "TCS", "Infosys"] if selected_company not in ["TCS", "Infosys"] else [selected_company, "Reliance Industries", "HDFC Bank"],
+    max_selections=8,
 )
 
-if not benchmark_df.empty:
-    benchmark_base = benchmark_df["Close"].iloc[0]
-    benchmark_df["Normalized Close"] = benchmark_df["Close"] / benchmark_base * 100
-    benchmark_name = "NIFTY 50" if benchmark == "^NSEI" else "SENSEX"
-    fig_compare.add_trace(
+if selected_company not in comparison_names:
+    comparison_names = [selected_company] + comparison_names
+
+comparison_names = list(dict.fromkeys(comparison_names))
+
+# -------------------- AUTO REFRESH --------------------
+refresh_count = st_autorefresh(interval=20000, key="live_refresh")
+
+all_selected_names = comparison_names
+symbols = [NSE_SYMBOLS[name] for name in all_selected_names]
+
+with st.spinner("Fetching Indian market data..."):
+    historical_data, monthly_data = load_historical_data(tuple(symbols), selected_period)
+    live_data = load_live_snapshot(tuple(symbols))
+
+if historical_data.empty:
+    st.error("No data found for the selected stocks.")
+    st.stop()
+
+selected_symbol = NSE_SYMBOLS[selected_company]
+stock_df = historical_data[historical_data["Symbol"] == selected_symbol].copy()
+stock_monthly_df = monthly_data[monthly_data["Company"] == selected_company].copy()
+summary = build_summary(stock_df, stock_monthly_df)
+predictive_signal = get_predictive_signal(stock_df)
+
+# -------------------- LIVE WATCHLIST --------------------
+st.subheader("Live / Current Price Watchlist")
+
+if live_data.empty:
+    st.info("Live/current snapshot could not be loaded right now. Historical analysis is still available below.")
+else:
+    live_cols = st.columns(min(4, len(live_data)))
+
+    for idx, (_, row) in enumerate(live_data.head(4).iterrows()):
+        with live_cols[idx % len(live_cols)]:
+            delta_text = f"{row['Change']:.2f} ({row['Change %']:.2f}%)" if pd.notna(row["Change %"]) else "N/A"
+            st.metric(
+                label=row["Company"],
+                value=format_inr(row["Live Price"]),
+                delta=delta_text,
+            )
+            st.caption(f"{row['Sector']} • {row['Symbol']}")
+
+    with st.expander("View full live/current price table", expanded=False):
+        live_view = live_data.copy()
+        live_view["Live Price"] = live_view["Live Price"].map(lambda x: round(x, 2))
+        live_view["Prev Close"] = live_view["Prev Close"].map(lambda x: round(x, 2) if pd.notna(x) else np.nan)
+        live_view["Change"] = live_view["Change"].map(lambda x: round(x, 2) if pd.notna(x) else np.nan)
+        live_view["Change %"] = live_view["Change %"].map(lambda x: round(x, 2) if pd.notna(x) else np.nan)
+        live_view["Last Updated"] = live_view["Last Updated"].dt.strftime("%d-%m-%Y %I:%M %p")
+        st.dataframe(live_view, use_container_width=True, hide_index=True)
+
+# -------------------- LIVE FLUCTUATION FOR SELECTED STOCK --------------------
+st.subheader(f"Live Fluctuation: {selected_company}")
+
+live_intraday_df = load_live_intraday(selected_symbol)
+
+if live_intraday_df.empty:
+    st.info("Live intraday data is not available right now.")
+else:
+    latest_live = float(live_intraday_df["Close"].iloc[-1])
+    open_live = float(live_intraday_df["Open"].iloc[0])
+    high_live = float(live_intraday_df["High"].max())
+    low_live = float(live_intraday_df["Low"].min())
+    live_change = latest_live - open_live
+    live_change_pct = ((latest_live / open_live) - 1) * 100 if open_live != 0 else np.nan
+
+    l1, l2, l3, l4 = st.columns(4)
+    l1.metric("Live Price", format_inr(latest_live), f"{live_change:.2f} ({live_change_pct:.2f}%)")
+    l2.metric("Day Open", format_inr(open_live))
+    l3.metric("Day High", format_inr(high_live))
+    l4.metric("Day Low", format_inr(low_live))
+
+    fig_live = go.Figure()
+    fig_live.add_trace(
         go.Scatter(
-            x=benchmark_df["Date"],
-            y=benchmark_df["Normalized Close"],
+            x=live_intraday_df["Datetime"],
+            y=live_intraday_df["Close"],
             mode="lines",
-            name=benchmark_name,
+            name="Live Price",
+            line=dict(width=3),
         )
     )
 
-fig_compare.update_layout(height=430)
-st.plotly_chart(fig_compare, use_container_width=True)
-
-heat_left, heat_right = st.columns(2)
-
-with heat_left:
-    corr_source = comparison.pivot_table(index="Date", columns="Company", values="Daily Return %")
-    if corr_source.shape[1] >= 2:
-        corr = corr_source.corr().round(2)
-        fig_corr = px.imshow(corr, text_auto=True, aspect="auto", title="Return Correlation Heatmap")
-        fig_corr.update_layout(height=400)
-        st.plotly_chart(fig_corr, use_container_width=True)
-    else:
-        st.info("Select at least 2 stocks to view correlation.")
-
-with heat_right:
-    sector_perf = comparison.groupby("Company", as_index=False).agg({"Close": ["first", "last"]})
-    sector_perf.columns = ["Company", "Start", "End"]
-    sector_perf["Return %"] = ((sector_perf["End"] / sector_perf["Start"]) - 1) * 100
-    fig_sector = px.bar(
-        sector_perf.sort_values("Return %", ascending=False),
-        x="Company",
-        y="Return %",
-        title="Stock Returns Ranking"
+    fig_live.update_layout(
+        title=f"{selected_company} Live Price Movement",
+        xaxis_title="Time",
+        yaxis_title="Price (₹)",
+        height=420,
     )
-    fig_sector.update_layout(height=400)
-    st.plotly_chart(fig_sector, use_container_width=True)
+    st.plotly_chart(fig_live, use_container_width=True)
 
-# NEW FEATURE SECTION
-st.subheader("🚀 New Feature: Volume Spike Detector")
+    last_point = live_intraday_df["Datetime"].iloc[-1]
+    st.caption(f"Auto-refresh active every 20 seconds • latest data point: {last_point}")
 
-spike_df = get_volume_spikes(stock_df, volume_spike_threshold)
+# -------------------- PREDICTIVE SIGNAL --------------------
+st.subheader("Predictive Buy / Sell Signal")
 
-vol_left, vol_right = st.columns([2, 1])
+sig1, sig2, sig3 = st.columns(3)
 
-with vol_left:
-    fig_volume = go.Figure()
-    fig_volume.add_trace(go.Bar(x=stock_df["Date"], y=stock_df["Volume"], name="Daily Volume"))
-    fig_volume.add_trace(go.Scatter(x=stock_df["Date"], y=stock_df["Volume MA 20"], mode="lines", name="20-Day Avg Volume"))
+with sig1:
+    if predictive_signal["signal"] == "BUY":
+        st.success(f"Signal: {predictive_signal['signal']}")
+    elif "BUY" in predictive_signal["signal"]:
+        st.warning(f"Signal: {predictive_signal['signal']}")
+    elif predictive_signal["signal"] == "SELL":
+        st.error(f"Signal: {predictive_signal['signal']}")
+    elif "SELL" in predictive_signal["signal"]:
+        st.warning(f"Signal: {predictive_signal['signal']}")
+    else:
+        st.info(f"Signal: {predictive_signal['signal']}")
 
-    if not spike_df.empty:
-        fig_volume.add_trace(
+with sig2:
+    st.metric("Signal Score", predictive_signal["score"])
+
+with sig3:
+    st.metric("Confidence", predictive_signal["confidence"])
+
+st.markdown("### Why this signal?")
+for idx, reason in enumerate(predictive_signal["reason"], start=1):
+    st.markdown(f"**{idx}.** {reason}")
+
+st.caption("This signal is based on technical indicators and recent price behaviour. It is for analysis and education, not financial advice.")
+
+# -------------------- SINGLE STOCK DETAILED ANALYSIS --------------------
+st.subheader(f"Detailed Analysis: {selected_company}")
+
+m1, m2, m3, m4, m5, m6 = st.columns(6)
+m1.metric("Latest Close", format_inr(summary["latest_close"]))
+m2.metric("Range Return", format_pct(summary["period_return"]))
+m3.metric("Latest Daily Return", format_pct(summary["latest_daily_return"]))
+m4.metric("Latest Monthly Return", format_pct(summary["latest_monthly_return"]))
+m5.metric("Average Volume", f"{summary['avg_volume']:,.0f}" if pd.notna(summary["avg_volume"]) else "N/A")
+m6.metric("RSI 14", f"{summary['latest_rsi']:.2f}" if pd.notna(summary["latest_rsi"]) else "N/A")
+
+info1, info2 = st.columns(2)
+with info1:
+    st.info(f"Selected range low: {format_inr(summary['low'])}")
+with info2:
+    st.info(f"Selected range high: {format_inr(summary['high'])}")
+
+chart_left, chart_right = st.columns([2.1, 1])
+
+with chart_left:
+    fig_price = go.Figure()
+    fig_price.add_trace(
+        go.Scatter(
+            x=stock_df["Date"],
+            y=stock_df["Close"],
+            mode="lines",
+            name="Close Price",
+            line=dict(width=3),
+        )
+    )
+
+    if show_sma:
+        fig_price.add_trace(
             go.Scatter(
-                x=spike_df["Date"],
-                y=spike_df["Volume"],
-                mode="markers",
-                name="Spike Days",
-                marker=dict(size=10, symbol="diamond")
+                x=stock_df["Date"],
+                y=stock_df["SMA 20"],
+                mode="lines",
+                name="SMA 20",
+            )
+        )
+        fig_price.add_trace(
+            go.Scatter(
+                x=stock_df["Date"],
+                y=stock_df["SMA 50"],
+                mode="lines",
+                name="SMA 50",
             )
         )
 
-    fig_volume.update_layout(
-        title=f"{selected_company} Volume Activity",
-        xaxis_title="Date",
-        yaxis_title="Volume",
-        height=420
+    fig_price.update_layout(
+        title=f"{selected_company} Historical Price Trend",
+        xaxis_title="Trading Date",
+        yaxis_title="Price (₹)",
+        height=430,
+        legend_title="Series",
     )
-    st.plotly_chart(fig_volume, use_container_width=True)
+    st.plotly_chart(fig_price, use_container_width=True)
 
-with vol_right:
-    st.markdown(f"**Spike Rule:** Volume ≥ {volume_spike_threshold:.1f} × 20-day average")
-    st.metric("Spike Days Found", len(spike_df))
+with chart_right:
+    st.markdown("### Quick Insights")
+    for i, insight in enumerate(generate_insights(stock_df, selected_company), start=1):
+        st.markdown(f"**{i}.** {insight}")
 
-    if not spike_df.empty:
-        latest_spike = spike_df.iloc[0]
-        st.success(
-            f"Latest spike: {latest_spike['Date'].date()} | "
-            f"Volume Ratio: {latest_spike['Volume Ratio']:.2f}x"
-        )
+# -------------------- DAILY + MONTHLY RETURNS --------------------
+ret_left, ret_right = st.columns(2)
+
+with ret_left:
+    daily_returns_df = stock_df.dropna(subset=["Daily Return %"]).copy()
+    fig_daily = px.line(
+        daily_returns_df,
+        x="Date",
+        y="Daily Return %",
+        title=f"{selected_company} Daily Return %",
+    )
+    fig_daily.update_layout(height=380, yaxis_title="Daily Return %")
+    st.plotly_chart(fig_daily, use_container_width=True)
+
+with ret_right:
+    fig_monthly = px.bar(
+        stock_monthly_df.dropna(subset=["Monthly Return %"]),
+        x="Month",
+        y="Monthly Return %",
+        title=f"{selected_company} Monthly Return %",
+    )
+    fig_monthly.update_layout(height=380, yaxis_title="Monthly Return %")
+    st.plotly_chart(fig_monthly, use_container_width=True)
+
+# -------------------- MULTI-STOCK COMPARISON --------------------
+st.subheader("Multiple Stock Comparison")
+
+comparison_df = historical_data[historical_data["Company"].isin(comparison_names)][["Date", "Company", "Sector", "Close", "Daily Return %", "Volume"]].copy()
+comparison_df["Normalized Close"] = comparison_df.groupby("Company")["Close"].transform(lambda s: (s / s.iloc[0]) * 100)
+
+compare_left, compare_right = st.columns(2)
+
+with compare_left:
+    fig_compare = px.line(
+        comparison_df,
+        x="Date",
+        y="Normalized Close",
+        color="Company",
+        title="Price Comparison (Base = 100)",
+    )
+    fig_compare.update_layout(height=420, yaxis_title="Normalized Price")
+    st.plotly_chart(fig_compare, use_container_width=True)
+
+with compare_right:
+    latest_daily = (
+        comparison_df.dropna(subset=["Daily Return %"])
+        .sort_values("Date")
+        .groupby("Company", as_index=False)
+        .tail(1)
+        .sort_values("Daily Return %", ascending=False)
+    )
+
+    fig_daily_compare = px.bar(
+        latest_daily,
+        x="Company",
+        y="Daily Return %",
+        color="Company",
+        title="Latest Daily Return Comparison",
+    )
+    fig_daily_compare.update_layout(height=420, showlegend=False)
+    st.plotly_chart(fig_daily_compare, use_container_width=True)
+
+# -------------------- SIGNAL TABLE --------------------
+st.subheader("Signal Table for Compared Stocks")
+signal_table = build_signal_table(historical_data, comparison_names)
+st.dataframe(signal_table, use_container_width=True, hide_index=True)
+
+# -------------------- MONTHLY COMPARISON + HEATMAP --------------------
+bottom_left, bottom_right = st.columns(2)
+
+with bottom_left:
+    latest_monthly = (
+        monthly_data[monthly_data["Company"].isin(comparison_names)]
+        .dropna(subset=["Monthly Return %"])
+        .sort_values("Month")
+        .groupby("Company", as_index=False)
+        .tail(1)
+        .sort_values("Monthly Return %", ascending=False)
+    )
+
+    fig_month_comp = px.bar(
+        latest_monthly,
+        x="Company",
+        y="Monthly Return %",
+        color="Company",
+        title="Latest Monthly Return Comparison",
+    )
+    fig_month_comp.update_layout(height=420, showlegend=False)
+    st.plotly_chart(fig_month_comp, use_container_width=True)
+
+with bottom_right:
+    heat_df = (
+        monthly_data[monthly_data["Company"].isin(comparison_names)]
+        .pivot_table(index="Company", columns="Month", values="Monthly Return %")
+    )
+
+    if heat_df.empty:
+        st.info("Not enough monthly data for heatmap.")
     else:
-        st.info("No spike days found for this threshold.")
+        fig_heat = px.imshow(
+            heat_df,
+            text_auto=".1f",
+            aspect="auto",
+            title="Monthly Return Heatmap (%)",
+        )
+        fig_heat.update_layout(height=420)
+        st.plotly_chart(fig_heat, use_container_width=True)
 
-if not spike_df.empty:
-    st.dataframe(
-        spike_df[["Date", "Close", "Volume", "Volume MA 20", "Volume Ratio", "Daily Return %"]]
-        .rename(columns={
-            "Close": "Close Price",
-            "Volume MA 20": "20D Avg Volume",
-            "Volume Ratio": "Volume Ratio",
-            "Daily Return %": "Daily Return %"
-        }),
-        use_container_width=True,
-        hide_index=True
-    )
-else:
-    st.info("Try lowering the spike threshold from the sidebar to detect more unusual volume days.")
+# -------------------- STOCK RANKING --------------------
+st.subheader("Stock Ranking in Selected Range")
 
-st.subheader("Raw data and export")
+ranking = (
+    historical_data[historical_data["Company"].isin(comparison_names)]
+    .groupby("Company", as_index=False)
+    .agg(Start_Close=("Close", "first"), End_Close=("Close", "last"))
+)
+ranking["Return %"] = ((ranking["End_Close"] / ranking["Start_Close"]) - 1) * 100
+ranking = ranking.sort_values("Return %", ascending=False)
+
+fig_rank = px.bar(
+    ranking,
+    x="Company",
+    y="Return %",
+    color="Company",
+    title="Overall Return Ranking",
+)
+fig_rank.update_layout(height=420, showlegend=False)
+st.plotly_chart(fig_rank, use_container_width=True)
+
+# -------------------- RAW DATA + DOWNLOAD --------------------
+st.subheader("Filtered Data Table")
+
 view_cols = [
     "Date", "Company", "Sector", "Open", "High", "Low", "Close", "Volume",
-    "Daily Return %", "SMA 20", "SMA 50", "Volatility 20D %", "Volume MA 20", "Volume Ratio"
+    "Daily Return %", "SMA 20", "SMA 50", "RSI 14", "5D Return %", "20D High", "20D Low"
 ]
-st.dataframe(data[view_cols], use_container_width=True, hide_index=True)
+available_cols = [col for col in view_cols if col in historical_data.columns]
+
+st.dataframe(historical_data[available_cols], use_container_width=True, hide_index=True)
 
 csv_buffer = io.StringIO()
-data[view_cols].to_csv(csv_buffer, index=False)
+historical_data[available_cols].to_csv(csv_buffer, index=False)
 
 st.download_button(
-    label="Download filtered data as CSV",
+    label="Download Data as CSV",
     data=csv_buffer.getvalue(),
-    file_name="indian_stock_dashboard_export.csv",
+    file_name="indian_stock_dashboard.csv",
     mime="text/csv",
 )
 
 st.markdown("---")
 st.markdown(
     "Built with **Streamlit + Pandas + NumPy + Plotly + yfinance**. "
-    "This project is ready for Streamlit Community Cloud, Render, or local deployment."
+    "This version supports live fluctuation, predictive buy/sell signals, one-stock detailed analysis, and a separate multi-stock comparison section."
 )
