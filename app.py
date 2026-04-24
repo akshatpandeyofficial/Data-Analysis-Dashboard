@@ -13,7 +13,7 @@ from streamlit_autorefresh import st_autorefresh
 # -------------------- PAGE SETUP --------------------
 st.set_page_config(
     page_title="Indian Stock Market Dashboard",
-    page_icon="📈",
+    page_icon="🔍",
     layout="wide",
 )
 
