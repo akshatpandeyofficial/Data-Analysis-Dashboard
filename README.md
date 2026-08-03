@@ -71,7 +71,7 @@ This project demonstrates EDA, dashboard design, and business-style communicatio
 - Correlation helps compare whether two stocks move similarly.
 - Normalized performance makes different stock prices comparable on the same scale.
 
-## Resume-friendly project description
+##  project description
 
 Built a deployable Streamlit dashboard for Indian stock-market analysis using Pandas, NumPy, Plotly, and yfinance. Implemented KPI cards, moving averages, return analysis, volatility tracking, stock comparison, correlation heatmaps, and CSV export with interactive filters.
 
