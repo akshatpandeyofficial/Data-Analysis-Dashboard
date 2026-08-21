@@ -12,7 +12,7 @@ This version uses **live Indian stock-market data** from Yahoo Finance for popul
 - Moving averages, returns, volatility, and correlation analysis
 - A ready-to-deploy Streamlit dashboard
 - Auto-generated insights that you can explain in your viva / README
-
+ 
 ## Tech stack
 
 
