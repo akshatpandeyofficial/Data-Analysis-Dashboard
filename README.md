@@ -75,7 +75,7 @@ This project demonstrates EDA, dashboard design, and business-style communicatio
 
 Built a deployable Streamlit dashboard for Indian stock-market analysis using Pandas, NumPy, Plotly, and yfinance. Implemented KPI cards, moving averages, return analysis, volatility tracking, stock comparison, correlation heatmaps, and CSV export with interactive filters.
 
-## Future improvements
+## Future improvements-:
 
 - Add candlestick charts
 - Add sector-wise grouping
