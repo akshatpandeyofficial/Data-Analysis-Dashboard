@@ -14,7 +14,6 @@ This version uses **live Indian stock-market data** from Yahoo Finance for popul
 - Auto-generated insights that you can explain in your viva / README
 
 
-
  
 ## Tech stack
 
